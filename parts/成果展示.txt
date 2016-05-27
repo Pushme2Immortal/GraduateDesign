@@ -1,0 +1,25 @@
+第四章中详细介绍了爬虫的组成部分、工作流程以及关键实现细节。本章将就实现的网络爬虫进行测试运行，并展示爬取的数据。
+5.1 测试环境
+ 
+ scrapy框架爬虫的测试环境：
+ 1 操作系统：windows 10 专业版
+ 2 硬件配置：Intel Core i5-3317U @1.70GHz 8G RAM 
+ 3 网络环境：吉林大学校园网
+ 4 软件环境： Python 2.7 Scrapy 1.0
+
+5.2 运行状态及测试
+
+经测试，爬虫抓取微博的速度可以达到 1300万/天 以上，具体要视网络情况。
+需要定期更换Cookies中的账号信息。建议大量预存。
+MongoDB性能良好。足以处理该量级的数据。
+
+5.3 成果展示
+
+数据库截图：
+
+
+数据库设置 Information、Tweets、Follows、Fans四张表，此处仅介绍前面两张表的字段。
+
+Information 表： _id：采用 "用户ID" 作为唯一标识。 Birthday：出生日期。 City：所在城市。 Gender：性别。 Marriage：婚姻状况。 NickName：微博昵称。 Num_Fans：粉丝数量。 Num_Follows：关注数量。 Num_Tweets：已发微博数量。 Province：所在省份。 Signature：个性签名。 URL：微博的个人首页。
+
+Tweets 表： _id：采用 "用户ID-微博ID" 的形式作为一条微博的唯一标识。 Co_oridinates：发微博时的定位坐标（经纬度），调用地图API可直接查看具体方位，可识别到在哪一栋楼。 Comment：微博被评论的数量。 Content：微博的内容。 ID：用户ID。 Like：微博被点赞的数量。 PubTime：微博发表时间。 Tools：发微博的工具（手机类型或者平台） Transfer：微博被转发的数量。

@@ -1,0 +1,135 @@
+第三章中对Scrapy框架以及MongoDB进行了大致的介绍，包括框架整体架构，以及如何创建一个Scrapy项目以及解释运行。同时还指出，NoSQL数据库在爬虫项目中具有无可代替的灵活性，使用MongoDB作为数据存储的解决方案，契合主题而且十分正确。另外在第二章中，我们还提到了在爬虫技术中将会遇到的不可避免的几个问题，如需要登录权限的网站，或者是Robot.txt对爬虫的限制。在这章中，我们将会对以上提到的方面，做出更加详细可行的解决方案，结合Scrapy框架、MongoDB以及其他开源技术实现可定制的拓展性强的网络爬虫。
+
+4.1 爬虫总体设计介绍
+4.1.1 爬取对象
+本文实现的爬虫将以“新浪微博”为爬取目标，爬取网站用户的基本信息、用户的粉丝和其关注用户，还将爬取用户所发表的微博内容，包括文本、定位、发送方式、以及获得的赞数和被转发数。
+“新浪微博“ 是国内著名的社交网站，有新浪网推出，提供类tweet博客服务。选取”新浪微博“作为爬取对象，我们可以接触到很多方面的内容，如网页结构元素解析、登陆验证机制以及好友关系网的实现等诸多细节，这将帮助我们更加细致的了解爬虫的工作原理和流程。同时爬取得到的用户信息也极具价值，我们可以初步接触数据分析挖掘等知识，学习在大量数据规模下的趋势。
+4.1.2 总体架构设计
+爬虫一共分为三个模块即前置规则预设模块、网页抓取模块、后续数据处理模块。
+前置规则预设模块负责为程序提前设定了将要获取的数据的格式，更换User-agent以及更换Cookies登陆多个测试账号。网页抓取模块负责从定义的初始URL开始抓取网页信息，并进行初步提取分析，根据返回结果的类型调用不同的回调函数。后续数据处理模块则进一步分析网页抓取模块的结果，判定是否为合法的爬取结果，并将其存入数据库或者将此URL调至Scheduler等待调度爬取。下面将对各个部分的实现细节进行介绍。
+
+
+4.2 实现细节。
+4.2.1 前置规则预设模块
+首先是对爬虫爬取数据格式的规定。在item.py文件中，我们根据所要提取的字段设置了相应的类型。如下图所示。
+class InformationItem:定义了爬取用户信息的格式。
+class TweetsItem：这个类定义的是发表微博相关内容格式。
+class FollowItem/class FanItem：定义了爬取关注人和粉丝数据内容。
+
+4.2.2 网页抓取模块
+网页抓取模块的实现代码主要是在Spiders.py中，这是整个项目的核心部分。在Spiders中我们定义了SinaSpider类。如下图所示。
+接下来我们将详细讲解Spider类的作用。
+name和host属性 定义了这个类的名字，是我们爬虫具有的唯一标识。host属性定义了爬虫的爬取域，将在以“”该域名为主机的所有网页内进行爬取。
+start_urls属性是一个初始URL列表，提供了爬虫开始运行时的目标，爬虫将从这些页面出发抓取数据。这里我们采取了使用用户ID代替了较长的完整URL。在接下来的start_requesets()方法中再将用户ID与host地址结合形成完整的初始URL。
+scrawl_ID以及finish_ID 为Set类型的变量。Python中的set类型和其他语言相似，是一种
+无序不重复元素，基本功能包括消除重复元素等。在这里我们使用Set类型的变量来标记已经爬取过的页面和等待调度爬取的页面，具有良好效果。
+
+请求处理部分
+在SinaSpider中我们定义了以下的函数。其中包括初始化Request并启动下载的start_requests()函数和四个回调函数。回调函数分别处理抓取用户信息、微博内容、粉丝以及关注对象。接下来将详细讲解start_requests()函数以及parse0()函数
+
+start_requests()负责读取在start_urls列表中的URL，生成了对应的Request对象，该对象将被作为参数被相应的回调函数调用。
+            ID = self.scrawl_ID.pop()
+            self.finish_ID.add(ID)  # 加入已爬队列
+            ID = str(ID)
+            url_follows = "http://weibo.cn/%s/follow" % ID
+            url_fans = "http://weibo.cn/%s/fans" % ID
+            url_tweets = "http://weibo.cn/%s/profile?filter=1&page=1" % ID
+            url_information0 = "http://weibo.cn/attgroup/opening?uid=%s" % ID
+取一个等待被调用的urllib，将其从待爬取队列中删去，并把这个id标记为已被爬取，加入finish_id。再将这个ID与固定的URL前缀组成完整的初始URL，这里四个URL分别是代表了关注用户页面、粉丝页面、发表微博页面以及个人信息。我们的爬虫将从这里开始抓取。
+
+            yield Request(url=url_information0, meta={"ID": ID}, callback=self.parse0)
+
+这句语句产生了一个请求，即yield a request，结合外层的while循环，展现了scrapy的追踪链接的机制：当我们在回调函数中yield一个request之后，Scrapy将会调度，发送该请iu，并且在该请求完成时，调用所注册的回调函数。callback = self.parse0 这个参数即代表该请求使用parse0作为回调函数，用于最终产生我们想要的数据。
+另外的同类型语句同理，不再赘述。
+
+parse0()函数负责抓取一部分的个人信息。通过callback来处理yield的
+Request对象。
+        selector = Selector(response)
+        text0 = selector.xpath('body/div[@class="u"]/div[@class="tip2"]').extract_first(）
+    定义了选择器(Selector),该选择器使用xpath方法，根据所要提取的微博用户信息文本在网页中的结构作为参数，解析网页并提取这一部分。
+      yield Request(url=url_information1, meta={"item": informationItems}, callback=self.parse1)
+parse0将分析返回的Request内容，返回 Item 对象、dict、 Request 或者一个包括三者的可迭代容器。 返回的Request对象之后会经过Scrapy处理，下载相应的内容，并调用设置的callback函数，与之前的start_requests()类似。
+其他的回调函数类似，不再赘述。
+
+
+4.2.3 后置数据处理
+通过Spider类我们已经爬取到目标数据之后，我们需要考虑到数据的存储问题。前一章讲到，对于爬虫爬取到的数据具有复杂结构，我们应该使用MongoDB来存储结果。如何进行爬取结果和数据库之间的传送问题，是后置数据处理模块将要解决的问题。主要代码集中在pipelines.py文件中。
+class MongoDBPipleline(object):
+    def __init__(self):
+        clinet = pymongo.MongoClient("localhost", 27017)
+        db = clinet["Sina"]
+        self.Information = db["Information"]
+        self.Tweets = db["Tweets"]
+        self.Follows = db["Follows"]
+        self.Fans = db["Fans"]
+    def process_item(self, item, spider):
+        """ 判断item的类型，并作相应的处理，再入数据库 """
+        if isinstance(item, InformationItem):
+            try:
+                self.Information.insert(dict(item))
+            except Exception:
+                pass
+        ..."""其他类似函数“”“...
+
+pipelines.py中定义了MondoDBPipeline类，包含了两个方法，分别用来初始化数据表和处理item并入库。
+与mongodb的交互是通过pymongo开源模块实现的。
+clinet = pymongo.MongoClient("localhost", 27017)打开了与数据库的本地连接，然后创建了名为”Sina“的数据库，接下来的语句分别创建Information、Tweet、Follows以及Fans四个表，用以存储对应的信息。
+ process_item()函数负责判断item的类型，如判断出为InformationItem，则将其插入INformation表中。
+ 至此完成了后续数据处理。
+
+
+4.3关键问题处理
+在第二章中我们提到在设计爬虫中会遇到的一些关键问题，如突破目标网页对爬虫的限制、解决URL重复问题、多线程并发实现。在这一节，我们将介绍在本研究中如何解决这些问题。
+4.3.1 网页登陆与访问限制
+新浪微博采取账号密码准入机制。如果需要访问大量用户和微博内容，我们需要在程序中解决登陆问题和Robot.txt文件造成的访问限制。
+1）登陆问题的解决:
+如上一章中对cookies的介绍，Cookies的合理利用可以使得爬虫使用cookies中保存的账号信息直接与浏览器和服务器进行交互，完成登陆。但是新浪微博对于爬虫的限制比较严格，当使用单个账号进行快速爬取时，服务器很快将有反应来限制爬虫，即弹出302错误，让无法再获取资源。所以我们将通过在cookies文件中写入大量微博账号，每隔一段时间自动更换，使得爬虫得以继续运行。
+而对于Robot.txt的访问限制，我们分析得出，Robot.txt对爬虫的拒绝机制主要在于User-agent的识别，当以正常浏览器访问站点时不会出现问题，所以我们通过user-agent池的方法将爬虫伪装成普通浏览器即可解决。自动更换cookies和user-agent的代码如下：
+class UserAgentMiddleware(object):
+    """ 换User-Agent """
+
+    def process_request(self, request, spider):
+        agent = random.choice(agents)
+        request.headers["User-Agent"] = agent
+
+
+class CookiesMiddleware(object):
+    """ 换Cookie """
+
+    def process_request(self, request, spider):
+        cookie = random.choice(cookies)
+        request.cookies = cookie
+
+2）URL去重
+Scrapy框架对URL去重问题有自带的便利的处理方法。它是通过RFPDupe Filter 
+这个类实现的，具体来说是通过这个类里面的一个叫做 
+request_fingerprint 的方法来实现。其中的关键代码如下所示。
+ 
+def request_fingerprint(request, include_headers=None): 
+   if include_headers: 
+          include_headers = tuple([h.lower() for h in sorted(include_headers)]) 
+      cache = _fingerprint_cache.setdefault(request, {}) 
+      if include_headers not in cache: 
+          fp = hashlib.sha1() 
+          fp.update(request.method) 
+          fp.update(canonicalize_url(request.url)) 
+          fp.update(request.body or '') 
+          if include_headers: 
+              for hdr in include_headers: 
+                  if hdr in request.headers: 
+                      fp.update(hdr) 
+                      for v in request.headers.getlist(hdr): 
+                         fp.update(v) 
+          cache[include_headers] = fp.hexdigest() 
+      return cache[include_headers] 
+由上述代码我们可以看到，去重用的信息指纹是利用四个部分通过 
+SHA1 算法计算得到，即 sha1(method + url + body + head)。
+
+3）多线程并发
+并发是指同时处理的request的数量。其有全局限制和局部(每个网站)的限制。
+
+Scrapy默认的全局并发限制对同时爬取大量网站的情况并不适用，因此我们需要增加这个值。 增加多少取决于爬虫能占用多少CPU。 一般开始可以设置为 100 。
+根据我们的爬取目标，在spiders我们一共创建了四个Request请求，他们之间默认会采用多线程并发处理。我们可以在settings.py中设置并发效率。如图所示：
+
+
+ 
